@@ -1551,6 +1551,7 @@ class OAuth2ClientConnection(SSLAsyncoreDispatcher):
 
         self.censor_next_log = False  # try to avoid logging credentials
         self.authenticated = False
+        self.waiting_for_server_fin = False
 
         self.set_ssl_connection(
             bool(not custom_configuration['local_starttls'] and custom_configuration['local_certificate_path'] and
@@ -1647,14 +1648,26 @@ class OAuth2ClientConnection(SSLAsyncoreDispatcher):
         self.close()
 
     def close(self):
+        if self.waiting_for_server_fin:
+            return
+        Log.debug(self.info_string(), '[ Teardown of client connection ]')
         if self.server_connection:
-            self.server_connection.client_connection = None
             with contextlib.suppress(AttributeError):
-                self.server_connection.close()
-            self.server_connection = None
-        self.proxy_parent.remove_client(self)
+                # The shutdown sends a FIN but does not completely close the socket.
+                Log.debug(self.info_string(), '[ Closing server connection for writing (sends TCP FIN) ]')
+                self.server_connection.socket.shutdown(socket.SHUT_WR)
+            with contextlib.suppress(AttributeError):
+                # We do not completely close the socket here so that later responses of the email server can still be forwarded.
+                Log.debug(self.info_string(), '[ Closing client connection for reading ]')
+                self.socket.shutdown(socket.SHUT_RD)
+            self.waiting_for_server_fin = True
+        else:
+            self.proxy_parent.remove_client(self)
+            self.socket_close()
+
+    def socket_close(self):
         with contextlib.suppress(OSError):
-            Log.debug(self.info_string(), '<-- [ Server disconnected ]')
+            Log.debug(self.info_string(), '[ Closing client connection ]')
             super().close()
 
 
@@ -2135,14 +2148,17 @@ class OAuth2ServerConnection(SSLAsyncoreDispatcher):
         self.close()
 
     def close(self):
+        Log.debug(self.info_string(), '[ Teardown of server connection ]')
+        with contextlib.suppress(OSError):
+            Log.debug(self.info_string(), '[ Closing server connection ]')
+            super().close()
         if self.client_connection:
             self.client_connection.server_connection = None
+            self.proxy_parent.remove_client(self.client_connection)
             with contextlib.suppress(AttributeError):
-                self.client_connection.close()
+                Log.debug(self.info_string(), '[ Closing client connection after server connection was closed ]')
+                self.client_connection.socket_close()
             self.client_connection = None
-        with contextlib.suppress(OSError):
-            Log.debug(self.info_string(), '--> [ Client disconnected ]')
-            super().close()
 
 
 class IMAPOAuth2ServerConnection(OAuth2ServerConnection):
