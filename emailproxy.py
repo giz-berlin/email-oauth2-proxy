@@ -755,6 +755,11 @@ class OAuth2Helper:
         jwt_certificate_path = AppConfig.get_option_with_catch_all_fallback(config, username, 'jwt_certificate_path')
         jwt_key_path = AppConfig.get_option_with_catch_all_fallback(config, username, 'jwt_key_path')
 
+        # Some clients impose arbitrary length limitations on usernames.
+        # To circumvent this, you can configure a username overwrite that is used in the authentication command
+        # to the server. It must match the claim the email server extracts the username from.
+        username_overwrite = AppConfig.get_option_with_catch_all_fallback(config, username, 'username_overwrite')
+
         # because the proxy supports a wide range of OAuth 2.0 flows, in addition to the token_url we only mandate the
         # core parameters that are required by all methods: client_id and oauth2_scope (or, for non-standard ROPCG,
         # currently only known to be used by 21Vianet, oauth2_resource instead of oauth2_scope - see GitHub #351)
@@ -964,7 +969,7 @@ class OAuth2Helper:
 
             # send authentication command to server (response checked in ServerConnection) - note: we only support
             # single-trip authentication (SASL) without actually checking the server's capabilities - improve?
-            oauth2_string = OAuth2Helper.construct_oauth2_string(username, access_token)
+            oauth2_string = OAuth2Helper.construct_oauth2_string(username_overwrite if username_overwrite else username, access_token)
             return True, oauth2_string
 
         except OAuth2Helper.TokenRefreshError as e:
